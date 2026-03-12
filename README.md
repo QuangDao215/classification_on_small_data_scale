@@ -256,6 +256,8 @@ To validate all findings robustly, we ran **12 experiment configurations × 5 fo
 | 2 | EfficientNet + Threshold | 0.7622 ± 0.0389 | 0.7870 ± 0.0420 |
 | 5 | EfficientNet + Threshold + Imbalance + CutMix | 0.7450 ± 0.0732 | 0.7713 ± 0.0693 |
 
+![All 12 experiments ranked by Macro F1 with error bars](cv_all_experiments.png)
+
 ### Statistical Significance (paired t-tests vs best)
 
 | vs Experiment 12 | p-value | Significant? |
@@ -268,6 +270,18 @@ To validate all findings robustly, we ran **12 experiment configurations × 5 fo
 | 1–5. All EfficientNet variants | <0.02 | Yes |
 
 **Notable:** Experiment 12 vs 10 is **not statistically significant** (p=0.106). While the full stack (k-NN + CutMix) has the highest mean F1, the difference over CutMix alone may be noise. For practical deployment, **Experiment 10 (unfreeze-1 + threshold + CutMix)** offers the best stability (lowest std at ±0.0127) with competitive performance.
+
+### Per-Class Performance Across All Experiments
+
+The heatmap below shows how each experiment performs on individual classes — revealing which improvements target which classes:
+
+![Per-class F1 heatmap across all experiments](cv_per_class_heatmap.png)
+
+### Fold-Level Stability
+
+The box plot shows the distribution of Macro F1 across the 5 folds for each experiment. Tighter boxes indicate more stable, reliable performance:
+
+![Fold-level Macro F1 distribution for all experiments](cv_fold_stability.png)
 
 ### k-NN Revived by CutMix
 
@@ -315,12 +329,134 @@ The single largest improvement came from fixing mislabeled data. The second larg
 
 ---
 
-## Reproducibility
+## Quickstart: Reproducing All Results
 
-All experiments use `SEED=42` for reproducibility. The final 5-fold CV notebook runs all 12 configurations end-to-end. Key dependencies:
+### Prerequisites
 
 - Python 3.10+
-- PyTorch 2.x with CUDA
-- torchvision
-- scikit-learn
-- DINOv2 via `torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')`
+- NVIDIA GPU with CUDA support (tested on RTX 4080)
+- ~4GB free disk space
+
+### Step 1: Unpack the Dataset
+
+The dataset is provided as zip files. Extract them into your project directory:
+
+```bash
+# Extract training and test data
+unzip data_train.zip -d .
+unzip data_test.zip -d .
+```
+
+On Windows, you can also right-click each zip file → **Extract All** into the project folder.
+
+After extraction, each class folder inside `data_train/` and `data_test/` may itself contain a zip file with the images. If so, extract those as well:
+
+```bash
+# If class-level zips exist, extract them into their respective folders
+cd data_train
+for f in */*.zip; do unzip "$f" -d "$(dirname "$f")"; done
+cd ..
+
+cd data_test
+for f in */*.zip; do unzip "$f" -d "$(dirname "$f")"; done
+cd ..
+```
+
+> On Windows, manually extract any zip files found inside the class folders (e.g., `data_train/thiennhien/images.zip`) so that the image files (`.jpg`, `.png`, etc.) sit directly inside the class folder.
+
+### Step 2: Verify Project Structure
+
+Ensure your project directory looks like this:
+
+```
+project/
+├── data_train/
+│   ├── em_be_choi_verified/
+│   ├── ngay_tet_verified/
+│   ├── other/
+│   ├── thiennhien/
+│   ├── trekking_verified/
+│   └── tu_hop_verified/
+├── data_test/
+│   ├── em_be_choi_verified/
+│   ├── ngay_tet_verified/
+│   ├── other/
+│   ├── thiennhien/
+│   ├── trekking_verified/
+│   └── tu_hop_verified/
+├── image_classification_5fold_cv.ipynb
+└── README.md
+```
+
+> **Important:** The data in `data_train/` and `data_test/` should be the **relabeled** version. The label audit notebook (`image_classification_dinov2.ipynb`) can help identify mislabeled images, but the actual file moves must be done manually.
+
+### Step 3: Create Virtual Environment
+
+```bash
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# Linux/Mac
+source venv/bin/activate
+```
+
+### Step 4: Install Dependencies
+
+```bash
+# PyTorch with CUDA (adjust cu121 to match your CUDA version — check with nvidia-smi)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Other dependencies
+pip install numpy pandas matplotlib seaborn scikit-learn scipy Pillow ipykernel
+```
+
+### Step 5: Register Jupyter Kernel
+
+```bash
+python -m ipykernel install --user --name=venv --display-name "Python (venv)"
+```
+
+### Step 6: Run the Notebook
+
+Open `image_classification_5fold_cv.ipynb` in your IDE (Cursor, VS Code, or JupyterLab). Select the "Python (venv)" kernel, then **Run All**.
+
+The notebook will:
+1. Merge train and test data into a single pool
+2. Create 5 stratified folds
+3. Run all 12 experiment configurations (60 training runs total)
+4. Output a ranked comparison table, per-class heatmap, box plots, and statistical significance tests
+
+> **Expected runtime:** ~60–90 minutes on an RTX 4080. DINOv2 is downloaded automatically via `torch.hub` on the first run (~90MB).
+
+### Step 7: Verify Output
+
+After completion, you should see:
+- Ranked table of all 12 experiments with mean ± std Macro F1
+- `cv_all_experiments.png` — bar chart with error bars
+- `cv_per_class_heatmap.png` — per-class F1 across all experiments
+- `cv_fold_stability.png` — box plots showing fold-level variance
+- Paired t-test results comparing the best experiment against all others
+
+### Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| `RuntimeError: DataLoader worker exited unexpectedly` | Already handled — all loaders use `num_workers=0` for Windows compatibility |
+| `CUDA out of memory` | Reduce `BATCH_SIZE` from 16 to 8 in Section 2 |
+| `TypeError: CosineAnnealingWarmRestarts got unexpected keyword argument 'T_max'` | Use `T_0` instead of `T_max` (already fixed in the notebook) |
+| DINOv2 download fails | Check internet connection; `torch.hub` downloads from GitHub |
+| `TSNE.__init__() got unexpected keyword argument 'n_iter'` | Use `max_iter` instead of `n_iter` (scikit-learn >= 1.5) |
+
+### All Notebooks in This Project
+
+| Notebook | Purpose |
+|----------|---------|
+| `image_classification.ipynb` | Initial EfficientNet-B0 experiments |
+| `image_classification_dinov2.ipynb` | DINOv2 baseline + label audit pipeline |
+| `image_classification_relabeled.ipynb` | DINOv2 on relabeled data |
+| `image_classification_unfreeze.ipynb` | Partial unfreezing ablation study |
+| `image_classification_knn_ensemble.ipynb` | k-NN ensemble experiment |
+| `image_classification_cutmix_v2.ipynb` | CutMix on clean 5-class data |
+| **`image_classification_5fold_cv.ipynb`** | **Final: all 12 experiments with 5-fold CV** |
